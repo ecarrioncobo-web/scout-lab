@@ -867,7 +867,6 @@ El JSON debe seguir EXACTAMENTE esta estructura:
 Si un valor no aparece en las imágenes, usa 0 o null. Si ves la pantalla de Rendimiento de Futbolista, extrae TODOS los jugadores que veas con sus valoraciones, goles y asistencias.`;
 
     // Build messages with all images
-    const geminiImages = uploadedB64.map(b64 => ({ inlineData: { mimeType: "image/jpeg", data: b64 } }));
     const content = [
       { type: "text", text: `Estas son las capturas del partido ${teamName} vs ${rival}. Extrae todos los datos estadísticos visibles.` }
     ];
@@ -875,14 +874,14 @@ Si un valor no aparece en las imágenes, usa 0 o null. Si ves la pantalla de Ren
       content.push({ type: "image", source: { type: "base64", media_type: "image/jpeg", data: b64 } });
     });
 
-    const resp = await fetch("/.netlify/functions/analizar", {
+    const resp = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        systemPrompt,
-        rival,
-        teamName,
-        images: uploadedB64
+        model: "claude-sonnet-4-6",
+        max_tokens: 2000,
+        system: systemPrompt,
+        messages: [{ role: "user", content }]
       })
     });
 
@@ -893,7 +892,8 @@ Si un valor no aparece en las imágenes, usa 0 o null. Si ves la pantalla de Ren
 
     if(data.error){ throw new Error(data.error.message); }
 
-    const rawText = data.rawText || '';
+    const rawText = data.content.map(b=>b.text||'').join('');
+    // Strip possible markdown fences
     const clean = rawText.replace(/```json|```/gi,'').trim();
     const parsed = JSON.parse(clean);
 
@@ -988,10 +988,27 @@ function showExtractedData(d){
 
 function saveMatch(){
   if(!pendingData){ toast('No hay datos para guardar','err'); return; }
-  matches.push(pendingData);
+
+  // Buscar duplicado: mismo rival, misma jornada y mismo marcador
+  const dup = matches.findIndex(m =>
+    m._rival === pendingData._rival &&
+    m._jornada === pendingData._jornada &&
+    m._gf === pendingData._gf &&
+    m._gc === pendingData._gc
+  );
+
+  if(dup !== -1){
+    const ok = confirm(`Ya existe un partido vs ${pendingData._rival} (${pendingData._jornada}) con el mismo marcador. ¿Quieres reemplazarlo con los datos nuevos?`);
+    if(!ok) return;
+    matches[dup] = pendingData;
+    toast(`Partido vs ${pendingData._rival} actualizado`);
+  } else {
+    matches.push(pendingData);
+    toast(`Partido vs ${pendingData._rival} guardado en temporada`);
+  }
+
   saveMatches();
   updateRecord();
-  toast(`Partido vs ${pendingData._rival} guardado en temporada`);
   clearImages();
   pendingData=null;
   document.getElementById('analysis-result').style.display='none';
